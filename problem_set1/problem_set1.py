@@ -79,9 +79,51 @@ def good_AP_finder(time,voltage):
         print "Can't run - the vectors aren't the same length!"
         return APTimes
     
-    ##Your Code Here!
+    # We can detect a spike by some of it's properties 
+    # 1. Going past 'point of no return' 
+    # 2. Refractory period after a spike 
+    # 3. Length of fluctation in voltage 
+    #    (e.g. spikes should be about the same duration)
+    # once we detect a spike, we can take the max from the range we 
+    # think the spike is in, to give us the best chance of being inside 
+    # the correct detection range 
+    # we detect 35 times that a voltage is recorded above 450 (but really anything
+    # above 200 is an AP) -- so we need to find the individual spikes within those
+    # -- e.g. criteria 1 above should be enough to find the AP and then we just need
+    # to filter the results. 
     
-    return APTimes
+    # Whoa, so after looking at the hard data, there's no way I can use simple 
+    # threshold detection to accurately pull out the action potentials.. 
+    # One idea I had was the look for a sharp jump in voltage, and then find the 
+    # local max, then not look for it again until voltage had dropped again 
+    
+    sampling_rate = time[1]-time[0]
+    print 'Sampling rate: %fs' % sampling_rate
+    
+    # get the 'slope' of the voltage via diff and filter by steepness
+    voltage_slope = plt.diff(voltage)
+
+    # Group indexes into groups that are sequential (part of same waveform) 
+    steep_values = plt.find(voltage_slope>43)    
+    common_waveforms = []
+    grouping_index = 0
+    for i, value in enumerate(steep_values):
+        if i == 0:
+            # skip first iteration
+            continue
+        if (value - steep_values[i-1] == 1):
+            # they are part of the same waveform            
+            continue
+        else: 
+            # we found the end of a group
+            common_waveforms.append(steep_values[grouping_index:i])
+            grouping_index = i
+    
+    # For each group, find the local max
+    for group in common_waveforms:
+        APTimes.append(plt.find(voltage==max(voltage[group]))[0])
+#    import pdb; pdb.set_trace()
+    return time[APTimes]
     
 
 def get_actual_times(dataset):
@@ -132,15 +174,22 @@ def detector_tester(APTimes, actualTimes):
     totalTime = (actual[len(actual)-1]-actual[0])
     falseSpikeRate = (len(APTimes) - len(actualTimes))/totalTime
     
+    # Added this for auto-evaluation based on criteria 
+    pct_spike_eval = "PASS" if percentTrueSpikes > 90.0 else "FAIL"
+    false_spike_eval = "PASS" if falseSpikeRate < 2.5 else "FAIL"
+    overall_result = "FAIL" if pct_spike_eval == "FAIL" or false_spike_eval == "FAIL" else "PASS"    
+    
     print 'Action Potential Detector Performance performance: '
-    print '     Correct number of action potentials = ' + str(len(actualTimes))
-    print '     Percent True Spikes = ' + str(percentTrueSpikes)
-    print '     False Spike Rate = ' + str(falseSpikeRate) + ' spikes/s'
-    print 
+    print '     Correct number of action potentials = %d' % len(actualTimes)
+    print '     %s: Percent True Spikes = %f' % (pct_spike_eval, percentTrueSpikes)
+    print '     %s: False Spike Rate = %f spikes/s' % (false_spike_eval, falseSpikeRate)
+    print ''
+    print 'Overall Evaluation: %s' % overall_result
+    print ''
     return {'Percent True Spikes':percentTrueSpikes, 'False Spike Rate':falseSpikeRate}
     
     
-def plot_spikes(time,voltage,APTimes,titlestr):
+def plot_spikes(time, voltage, APTimes, titlestr):
     """
     plot_spikes takes four arguments - the recording time array, the voltage
     array, the time of the detected action potentials, and the title of your
@@ -149,7 +198,16 @@ def plot_spikes(time,voltage,APTimes,titlestr):
     """
     plt.figure()
     
-    ##Your Code Here    
+    # plot the raw data 
+    plt.plot(time, voltage, 'b', hold=True)
+
+    # mark the AP times 
+    plt.plot(APTimes, [max(voltage)+50]*len(APTimes), 'r|', hold=True)
+
+    # add labels 
+    plt.xlabel("Time (s)")
+    plt.ylabel("Voltage (uV)")
+    plt.title(titlestr)    
     
     plt.show()
     
@@ -160,11 +218,27 @@ def plot_waveforms(time,voltage,APTimes,titlestr):
     plot.  The function creates a labeled plot showing the waveforms for each
     detected action potential
     """
-   
+
     plt.figure()
-   
-    ## Your Code Here   
-   
+    # note the sampling rate: time[1] - time[0] = .000034375014s 
+    # which can serve as our x-axis increments, so our x-axis is 
+    # essentially an array from -.003 to .003, of len .006 / .000034375014
+    xaxis = np.linspace(-.003, .003, num=(.006/.000034375014))
+    xincrements = len(xaxis)
+    
+    for ap in APTimes:
+        # yaxis is just the corresponding 6 ms from the voltage array (need to find the start and end index) 
+        peak_index = plt.find(time == ap)[0]
+        starting_index = peak_index - xincrements/2
+        ending_index = peak_index + xincrements/2
+        yaxis = voltage[starting_index:ending_index]
+        plt.plot(xaxis, yaxis, 'b', hold=True)
+        
+    # add labels 
+    plt.xlabel("Time (s)")
+    plt.ylabel("Voltage (uV)")
+    plt.title(titlestr)  
+
     plt.show()
     
 
@@ -172,11 +246,15 @@ def plot_waveforms(time,voltage,APTimes,titlestr):
 ##########################
 #You can put the code that calls the above functions down here    
 if __name__ == "__main__":
-    t,v = load_data('spikes_example.npy')    
-    actualTimes = get_actual_times('spikes_example_answers.npy')
-    APTime = bad_AP_finder(t,v)
-    plot_spikes(t,v,APTime,'Your Code Here ')
-    plot_waveforms(t,v,APTime,'Your Code Here')
-    detector_tester(APTime,actualTimes)
+     t,v = load_data('spikes_example.npy')  
+     actualTimes = get_actual_times('spikes_example_answers.npy')
+#     t, v = load_data('spikes_easy_practice.npy')
+#     actualTimes = get_actual_times('spikes_easy_practice_answers.npy')     
+#     t, v = load_data('spikes_hard_practice.npy')
+#     actualTimes = get_actual_times('spikes_hard_practice_answers.npy')     
+     APTime = good_AP_finder(t,v)
+     plot_spikes(t,v,APTime,'Action Potentials in Raw Signal')
+     plot_waveforms(t,v,APTime,'Waveforms')
+     detector_tester(APTime,actualTimes)
 
 
