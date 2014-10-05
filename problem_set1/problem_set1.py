@@ -71,59 +71,72 @@ def good_AP_finder(time,voltage):
     This function returns the following output:
         APTimes - all the times where a spike (action potential) was detected
     """
+#    def get_absolute_peak(arr):
+#        """Return the value of the highest value in the array"""
+#        return max(arr) if abs(max(arr)) > abs(min(arr)) else min(arr)
  
+    # Constants
+    peak_voltage = max(voltage) if abs(max(voltage)) > abs(min(voltage)) else min(voltage)
+#    THRESHOLD = abs(get_absolute_peak(voltage)) / 2.0
+    THRESHOLD = abs(peak_voltage) / 2.0
+    SAMPLING_RATE = time[1]-time[0]  
+    AP_SLOPE = np.std(voltage) * 2 
+    SPREAD = int(.0008 / SAMPLING_RATE) # number of samples in 1 ms
+    
+    print 'Calculating good APs: '
+    print '   THRESHOLD:     %f' % THRESHOLD
+    print '   SAMPLING_RATE: %f' % SAMPLING_RATE
+    print '   SLOPE:         %d' % AP_SLOPE
+    print '   SPREAD:        %d' % SPREAD     
+    
+    # Data stores
     APTimes = []
+    AP_set = set()
+
+    # for seeing steep changes in voltage
+    voltage_delta = np.diff(voltage)     
        
     #Let's make sure the input looks at least reasonable
     if (len(voltage) != len(time)):
         print "Can't run - the vectors aren't the same length!"
         return APTimes
-    
-    # We can detect a spike by some of it's properties 
-    # 1. Going past 'point of no return' 
-    # 2. Refractory period after a spike 
-    # 3. Length of fluctation in voltage 
-    #    (e.g. spikes should be about the same duration)
-    # once we detect a spike, we can take the max from the range we 
-    # think the spike is in, to give us the best chance of being inside 
-    # the correct detection range 
-    # we detect 35 times that a voltage is recorded above 450 (but really anything
-    # above 200 is an AP) -- so we need to find the individual spikes within those
-    # -- e.g. criteria 1 above should be enough to find the AP and then we just need
-    # to filter the results. 
-    
-    # Whoa, so after looking at the hard data, there's no way I can use simple 
-    # threshold detection to accurately pull out the action potentials.. 
-    # One idea I had was the look for a sharp jump in voltage, and then find the 
-    # local max, then not look for it again until voltage had dropped again 
-    
-    sampling_rate = time[1]-time[0]
-    print 'Sampling rate: %fs' % sampling_rate
-    
-    # get the 'slope' of the voltage via diff and filter by steepness
-    voltage_slope = plt.diff(voltage)
+        
+#    def find_local_peak(index):
+#        """
+#        Return local peak (either a spike or valley) index. 
+#        (Local is within a .002s spread)
+#        """
+#        sample = voltage[index-SPREAD:index+SPREAD+1]
+#        # now find the biggest spike (neg or positive)
+#        local_peak = get_absolute_peak(sample)
+#        
+#        # note: sorting idea came from http://stackoverflow.com/a/12141207
+#        peak_index = min(plt.find(voltage==local_peak), key=lambda x:abs(x-index))
+#        return peak_index
 
-    # Group indexes into groups that are sequential (part of same waveform) 
-    steep_values = plt.find(voltage_slope>43)    
-    common_waveforms = []
-    grouping_index = 0
-    for i, value in enumerate(steep_values):
-        if i == 0:
-            # skip first iteration
-            continue
-        if (value - steep_values[i-1] == 1):
-            # they are part of the same waveform            
-            continue
-        else: 
-            # we found the end of a group
-            common_waveforms.append(steep_values[grouping_index:i])
-            grouping_index = i
+    # Use steep slopes to find local peaks and valleys
+    for i, v in enumerate(voltage_delta):
+        # Check for a string of slopes above threshold
+        if abs(v) > AP_SLOPE and abs(voltage_delta[i+1]) > AP_SLOPE and abs(voltage_delta[i+2]) > AP_SLOPE:
+            # find local max near the second one 
+            # b/c it's more likely to be closer to the peak
+#            local_peak = find_local_peak(i+2)
+            # testing removal of inner fcn
+            i2 = i+2
+            sample = voltage[i2-SPREAD:i2+SPREAD+1]
+            local_peak = max(sample) if abs(max(sample)) > abs(min(sample)) else min(sample)
+            # note: sorting idea came from http://stackoverflow.com/a/12141207
+            local_peak = min(plt.find(voltage==local_peak), key=lambda x:abs(x-i2))
+
+            if abs(voltage[local_peak]) > THRESHOLD:
+                # set prevents duplicates
+                AP_set.add(time[local_peak])
+                
+    APTimes = list(AP_set)
     
-    # For each group, find the local max
-    for group in common_waveforms:
-        APTimes.append(plt.find(voltage==max(voltage[group]))[0])
-#    import pdb; pdb.set_trace()
-    return time[APTimes]
+    print '# APs found: %d' % len(APTimes)
+    
+    return APTimes
     
 
 def get_actual_times(dataset):
@@ -145,7 +158,7 @@ def detector_tester(APTimes, actualTimes):
     This only works if we give you the answers!
     """
     
-    JITTER = 0.025 #2 ms of jitter allowed
+    JITTER = 0.0025 #2 ms of jitter allowed
     
     #first match the two sets of spike times. Anything within JITTER_MS
     #is considered a match (but only one per time frame!)
@@ -169,6 +182,7 @@ def detector_tester(APTimes, actualTimes):
                     trueDetects = np.append(trueDetects, detected[i])
                     break;
     percentTrueSpikes = 100.0*len(trueDetects)/len(actualTimes)
+    
     
     #everything else is a false alarm
     totalTime = (actual[len(actual)-1]-actual[0])
@@ -223,7 +237,8 @@ def plot_waveforms(time,voltage,APTimes,titlestr):
     # note the sampling rate: time[1] - time[0] = .000034375014s 
     # which can serve as our x-axis increments, so our x-axis is 
     # essentially an array from -.003 to .003, of len .006 / .000034375014
-    xaxis = np.linspace(-.003, .003, num=(.006/.000034375014))
+    sampling_rate = .006 / (time[1] - time[0])
+    xaxis = np.linspace(-.003, .003, num=sampling_rate)
     xincrements = len(xaxis)
     
     for ap in APTimes:
@@ -232,6 +247,12 @@ def plot_waveforms(time,voltage,APTimes,titlestr):
         starting_index = peak_index - xincrements/2
         ending_index = peak_index + xincrements/2
         yaxis = voltage[starting_index:ending_index]
+        # hack to make sure arrays are same dimension 
+        # bug I ran into was when the recording is at the very end, and we 
+        # have less than 3ms of voltage data left to create a nice looking waveform.
+        if len(xaxis) != len(yaxis):
+            for x in range(0, (len(xaxis) - len(yaxis))):
+                yaxis = np.insert(yaxis, -1, 0)
         plt.plot(xaxis, yaxis, 'b', hold=True)
         
     # add labels 
@@ -245,16 +266,25 @@ def plot_waveforms(time,voltage,APTimes,titlestr):
         
 ##########################
 #You can put the code that calls the above functions down here    
-if __name__ == "__main__":
-     t,v = load_data('spikes_example.npy')  
-     actualTimes = get_actual_times('spikes_example_answers.npy')
+#if __name__ == "__main__":
+    # Example data 
+#     t,v = load_data('spikes_example.npy')  
+#     actualTimes = get_actual_times('spikes_example_answers.npy')
+    # Easy practice data
 #     t, v = load_data('spikes_easy_practice.npy')
 #     actualTimes = get_actual_times('spikes_easy_practice_answers.npy')     
+    # Hard practice data
 #     t, v = load_data('spikes_hard_practice.npy')
 #     actualTimes = get_actual_times('spikes_hard_practice_answers.npy')     
-     APTime = good_AP_finder(t,v)
-     plot_spikes(t,v,APTime,'Action Potentials in Raw Signal')
-     plot_waveforms(t,v,APTime,'Waveforms')
-     detector_tester(APTime,actualTimes)
+
+    # Challenge data
+#     t, v = load_data('spikes_challenge.npy')
+#     t, v = load_data('spikes_easy_test.npy')
+#     t, v = load_data('spikes_hard_test.npy')
+
+#     changed_for_submit = good_AP_finder(t,v)
+#     plot_spikes(t,v,changed_for_submit,'Action Potentials in Raw Signal')
+#     plot_waveforms(t,v,changed_for_submit,'Waveforms')
+#     detector_tester(changed_for_submit,actualTimes)
 
 
